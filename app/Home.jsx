@@ -1,158 +1,165 @@
-import React, { useState, useEffect } from "react";
-import {
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-  FlatList,
-  Image
-} from "react-native";
+import React, { useState, useEffect, useRef } from "react";
+import { View, Text, StyleSheet, Button, TouchableOpacity } from "react-native";
 import { Audio } from "expo-av";
-import { Feather } from "@expo/vector-icons";
 import OptionsNavi from "@/components/OptionsNavi";
+import { useGlobalSearchParams } from "expo-router";
 import Slider from "@react-native-community/slider";
-const Home = () => {
-  const music = [
-    {
-      id: "1",
-      title: "Ramenez La Coupe À La Maison",
-      uri: require("../assets/music/example.mp3"),
-    },
-    {
-      id: "2",
-      title: "Ace of Base - All That She Wants",
-      uri: require("../assets/music/example2.m4a"),
-    },
-  ];
+import { Feather } from "@expo/vector-icons";
 
+const Home = () => {
+  const { song } = useGlobalSearchParams();
+  const music = song ? JSON.parse(song) : null;
   const [sound, setSound] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentSongIndex, setCurrentSongIndex] = useState(0); // Track the current song index
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
+  const soundRef = useRef(null);
+  const positionUpdateInterval = useRef(null);
 
-  async function playSound(uri) {
-    if (sound) {
-      await sound.unloadAsync();
-    }
-    const { sound: newSound, status } = await Audio.Sound.createAsync(
-      uri,
-      {},
-      onPlaybackStatusUpdate
-    );
-    setSound(newSound);
-    await newSound.playAsync();
-    setIsPlaying(true);
-    setPosition(0);
-    setDuration(status.durationMillis);
-  }
+  useEffect(() => {
+    const loadAndPlaySound = async () => {
+      if (music) {
+        if (soundRef.current) {
+          await soundRef.current.stopAsync();
+          await soundRef.current.unloadAsync();
+          soundRef.current = null;
+        }
 
-  const onPlaybackStatusUpdate = (status) => {
-    if (status.isLoaded) {
-      setPosition(status.positionMillis);
-      setDuration(status.durationMillis);
-      if (status.didJustFinish) {
-        playNext();
+        const { sound } = await Audio.Sound.createAsync(
+          { uri: music.uri },
+          { shouldPlay: true }
+        );
+
+        soundRef.current = sound;
+        setSound(sound);
+
+        sound.setOnPlaybackStatusUpdate((status) => {
+          setIsPlaying(status.isPlaying);
+          setPosition(status.positionMillis);
+          setDuration(status.durationMillis);
+        });
+
+        await sound.playAsync();
       }
-    }
-  };
+    };
 
-  async function togglePlayPause() {
-    if (sound) {
-      if (isPlaying) {
-        await sound.pauseAsync();
-        setIsPlaying(false);
-      } else {
+    loadAndPlaySound();
+
+    return () => {
+      if (soundRef.current) {
+        soundRef.current.unloadAsync();
+        soundRef.current = null;
+      }
+      if (positionUpdateInterval.current) {
+        clearInterval(positionUpdateInterval.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (soundRef.current && isPlaying) {
+      positionUpdateInterval.current = setInterval(async () => {
+        const status = await soundRef.current.getStatusAsync();
+        if (status.isPlaying) {
+          setPosition(status.positionMillis);
+        }
+      }, 1000); // Update every second
+    } else if (positionUpdateInterval.current) {
+      clearInterval(positionUpdateInterval.current);
+    }
+
+    return () => {
+      if (positionUpdateInterval.current) {
+        clearInterval(positionUpdateInterval.current);
+      }
+    };
+  }, [isPlaying]);
+
+  const playPauseSound = async () => {
+    try {
+      if (soundRef.current) {
+        const status = await soundRef.current.getStatusAsync();
+        if (status.isLoaded) {
+          if (status.isPlaying) {
+            await soundRef.current.pauseAsync();
+            setIsPlaying(false);
+          } else {
+            await soundRef.current.playAsync();
+            setIsPlaying(true);
+          }
+        }
+      } else if (music) {
+        const { sound } = await Audio.Sound.createAsync(
+          { uri: music.uri },
+          { shouldPlay: true }
+        );
+
+        soundRef.current = sound;
+        setSound(sound);
+
+        sound.setOnPlaybackStatusUpdate((status) => {
+          setIsPlaying(status.isPlaying);
+          setPosition(status.positionMillis);
+          setDuration(status.durationMillis);
+        });
+
         await sound.playAsync();
         setIsPlaying(true);
       }
-    } else {
-      playSound(music[currentSongIndex].uri);
-    }
-  }
-
-  async function playNext() {
-    let nextIndex = (currentSongIndex + 1) % music.length;
-    setCurrentSongIndex(nextIndex);
-    await playSound(music[nextIndex].uri);
-  }
-
-  async function playPrevious() {
-    let prevIndex = (currentSongIndex - 1 + music.length) % music.length;
-    setCurrentSongIndex(prevIndex);
-    await playSound(music[prevIndex].uri);
-  }
-
-  const onSliderValueChange = async (value) => {
-    if (sound) {
-      const newPosition = value * duration;
-      await sound.setPositionAsync(newPosition);
-      setPosition(newPosition);
+    } catch (error) {
+      console.error("Error loading sound:", error);
     }
   };
 
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      if (sound && isPlaying) {
-        const status = await sound.getStatusAsync();
-        if (status.isLoaded) {
-          setPosition(status.positionMillis);
-          setDuration(status.durationMillis);
-        }
-      }
-    }, 1000);
+  const stopSound = async () => {
+    if (soundRef.current) {
+      await soundRef.current.stopAsync();
+      setIsPlaying(false);
+      setPosition(0);
+    }
+  };
 
-    return () => clearInterval(interval);
-  }, [sound, isPlaying]);
-
-  useEffect(() => {
-    return sound
-      ? () => {
-          sound.unloadAsync();
-        }
-      : undefined;
-  }, [sound]);
-
-  const formatTime = (milliseconds) => {
-    const minutes = Math.floor(milliseconds / 60000);
-    const seconds = ((milliseconds % 60000) / 1000).toFixed(0);
-    return `${minutes}:${seconds < 10 ? "0" : ""}${seconds}`;
+  const getFormattedTime = (millis) => {
+    const minutes = Math.floor(millis / 60000);
+    const seconds = ((millis % 60000) / 1000).toFixed(0);
+    return minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
   };
 
   return (
     <View style={styles.container}>
       <OptionsNavi />
       <View style={styles.boxContainer}>
-        <View style={styles.boxImage}>
-            <Image styles={styles.imgReact} source={require('../assets/images/react.png')}></Image>
-        </View>
-
-        <Text style={styles.title}>{music[currentSongIndex].title}</Text>
-
+        <Text style={styles.title}>
+          {music ? music.title : "Selecciona un Himno"}
+        </Text>
         <Slider
           style={styles.slider}
-          value={position / duration || 0}
-          onValueChange={onSliderValueChange}
           minimumValue={0}
-          maximumValue={1}
-          minimumTrackTintColor="#0084FF"
+          maximumValue={duration}
+          value={position}
+          onSlidingComplete={async (value) => {
+            if (soundRef.current) {
+              await soundRef.current.setPositionAsync(value);
+              setPosition(value);
+              const status = await soundRef.current.getStatusAsync();
+              if (!status.isPlaying) {
+                await soundRef.current.playAsync();
+                setIsPlaying(true);
+              }
+            }
+          }}
+          minimumTrackTintColor="*0084FF"
           maximumTrackTintColor="black"
+          thumbTintColor="blue"
         />
         <View style={styles.timeContainer}>
-          <Text style={styles.timeText}>{formatTime(position)}</Text>
-          <Text style={styles.timeText}>{formatTime(duration)}</Text>
+          <Text style={styles.timeText}>{getFormattedTime(position)}</Text>
+          <Text style={styles.timeText}>{getFormattedTime(duration)}</Text>
         </View>
-
         <View style={styles.containerController}>
           <TouchableOpacity
-            style={styles.controllerNext}
-            onPress={playPrevious}
-          >
-            <Feather name="arrow-left-circle" size={35} color="black" />
-          </TouchableOpacity>
-          <TouchableOpacity
             style={styles.controllerPlay}
-            onPress={togglePlayPause}
+            onPress={playPauseSound}
           >
             <Feather
               name={isPlaying ? "pause-circle" : "play-circle"}
@@ -160,15 +167,14 @@ const Home = () => {
               color="white"
             />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.controllerNext} onPress={playNext}>
-            <Feather name="arrow-right-circle" size={35} color="black" />
+          <TouchableOpacity onPress={stopSound} style={styles.controllerNext}>
+          <Feather name="stop-circle" size={40} color="black" />
           </TouchableOpacity>
         </View>
       </View>
     </View>
   );
 };
-export default Home;
 
 const styles = StyleSheet.create({
   container: {
@@ -182,36 +188,38 @@ const styles = StyleSheet.create({
     height: 236,
     borderRadius: 20,
     backgroundColor: "gray",
-    justifyContent:"center",
-    alignItems:"center"
+    justifyContent: "center",
+    alignItems: "center",
   },
-  imgReact:{
-    width:40,
-    height:40,
-    resizeMode: 'cover',
+  imgReact: {
+    width: 40,
+    height: 40,
+    resizeMode: "cover",
   },
-  title:{
-    marginTop:50,
-    fontSize:20,
-    fontWeight:"bold"
-    },
+  title: {
+    marginTop: 50,
+    fontSize: 20,
+    fontWeight: "bold",
+  },
   containerController: {
     width: 324,
     height: 80,
     alignItems: "center",
     justifyContent: "space-between",
-   // backgroundColor: "gray",
-    flexDirection: "row",
-    marginTop:50,
+    // backgroundColor: "gray",
+    flexDirection: 'column',
+    marginTop: 50,
 
   },
   controllerNext: {
     width: 60,
     height: 60,
-    borderRadius: 100,
+    borderRadius: 13,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#A9E5FF",
+    marginTop:30,
+
   },
   controllerPlay: {
     width: 60,
@@ -224,7 +232,8 @@ const styles = StyleSheet.create({
   slider: {
     width: "90%",
     height: 40,
-    marginTop:100,
+    
+    marginTop: 100,
   },
   timeContainer: {
     flexDirection: "row",
@@ -237,3 +246,5 @@ const styles = StyleSheet.create({
     color: "#000",
   },
 });
+
+export default Home;

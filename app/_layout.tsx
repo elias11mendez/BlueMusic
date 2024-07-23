@@ -12,6 +12,8 @@ export default function RootLayout() {
       <Stack.Screen name="index" />
       <Stack.Screen name="Home" />
       <Stack.Screen name="PlayList"/>
+      <Stack.Screen name="BluetoothConfig"/>
+
     </Stack>
   );
 }

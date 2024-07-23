@@ -7,7 +7,7 @@ import { Link } from "expo-router";
 const OptionsNavi = () => {
   return (
     <View style={styles.container}>
-      <Link href="/PlayList" asChild>
+      <Link href="BluetoothConfig" asChild>
         <TouchableOpacity>
           <Feather name="bluetooth" size={40} color="black" />
         </TouchableOpacity>
